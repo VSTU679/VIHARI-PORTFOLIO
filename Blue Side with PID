@@ -1,0 +1,294 @@
+package org.firstinspires.ftc.teamcode;
+
+import com.qualcomm.robotcore.eventloop.opmode.Autonomous;
+import com.qualcomm.robotcore.hardware.VoltageSensor;
+import org.firstinspires.ftc.robotcore.external.navigation.Velocity;
+import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode;
+import com.qualcomm.robotcore.hardware.DcMotor;
+import com.qualcomm.robotcore.util.ElapsedTime;
+import com.qualcomm.robotcore.hardware.DcMotorEx;
+
+@Autonomous(name="KickerAndShooterPIDBlue", group="Robot")
+public class KickerAndShooterPIDBlua extends LinearOpMode {
+    // --- DRIVE MOTORS ---
+    public DcMotor frontLeftMotor;
+    public DcMotor backLeftMotor;
+    public DcMotor frontRightMotor;
+    public DcMotor backRightMotor;
+
+    // --- SHOOTER + KICKER ---
+    public DcMotorEx shooter1Motor;
+    public DcMotorEx shooter2Motor;
+    public DcMotorEx kickerwheelMotor;
+    public DcMotor intakeMotor;
+
+    private PIDController5 pidControllerShooter;
+    private PIDController5 pidControllerKicker;
+    private VoltageSensor myControlHubVoltageSensor;
+    
+    // Voltage compensation constants
+    private static final double NOMINAL_VOLTAGE = 12.7; // Voltage you tuned your PID at
+    private double voltageCompensationFactor = 1.0;
+    
+    private double targetVelocity = 1050;
+    
+    private double targetVelocityKickerWheel = 500;
+    private ElapsedTime runtime = new ElapsedTime();
+
+    // --- CONSTANTS ---
+    static final double COUNTS_PER_MOTOR_REV = 28;
+    static final double DRIVE_GEAR_REDUCTION = 30.24;
+    static final double WHEEL_DIAMETER_INCHES = 3.543;
+    static final double COUNTS_PER_INCH = (COUNTS_PER_MOTOR_REV * DRIVE_GEAR_REDUCTION) /
+            (WHEEL_DIAMETER_INCHES * Math.PI);
+
+    static final double DRIVE_SPEED = 0.6;
+    static final double TURN_SPEED  = 0.5;
+
+    @Override
+    public void runOpMode() {
+        // --- HARDWARE MAP ---
+        frontLeftMotor  = hardwareMap.get(DcMotor.class, "frontLeftMotor");
+        backLeftMotor   = hardwareMap.get(DcMotor.class, "backLeftMotor");
+        frontRightMotor = hardwareMap.get(DcMotor.class, "frontRightMotor");
+        backRightMotor  = hardwareMap.get(DcMotor.class, "backRightMotor");
+
+        shooter1Motor   = hardwareMap.get(DcMotorEx.class, "shooter1Motor");
+        shooter2Motor   = hardwareMap.get(DcMotorEx.class, "shooter2Motor");
+        kickerwheelMotor = hardwareMap.get(DcMotorEx.class, "kickerwheelMotor");
+        intakeMotor     = hardwareMap.get(DcMotor.class, "intakeMotor");
+        myControlHubVoltageSensor = hardwareMap.get(VoltageSensor.class, "Control Hub");
+
+        // --- DIRECTIONS ---
+        frontLeftMotor.setDirection(DcMotor.Direction.REVERSE);
+        backLeftMotor.setDirection(DcMotor.Direction.REVERSE);
+        frontRightMotor.setDirection(DcMotor.Direction.FORWARD);
+        backRightMotor.setDirection(DcMotor.Direction.FORWARD);
+        kickerwheelMotor.setDirection(DcMotor.Direction.REVERSE);
+        frontLeftMotor.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.BRAKE);
+        frontRightMotor.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.BRAKE);
+        backLeftMotor.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.BRAKE);
+        backRightMotor.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.BRAKE);
+
+        // --- RESET ENCODERS ---
+        frontLeftMotor.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
+        backLeftMotor.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
+        frontRightMotor.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
+        backRightMotor.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
+        shooter1Motor.setMode(DcMotorEx.RunMode.STOP_AND_RESET_ENCODER);
+        kickerwheelMotor.setMode(DcMotorEx.RunMode.STOP_AND_RESET_ENCODER);
+        shooter2Motor.setMode(DcMotorEx.RunMode.STOP_AND_RESET_ENCODER);
+
+        frontLeftMotor.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
+        backLeftMotor.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
+        frontRightMotor.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
+        backRightMotor.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
+        shooter1Motor.setMode(DcMotorEx.RunMode.RUN_USING_ENCODER);
+        shooter2Motor.setMode(DcMotorEx.RunMode.RUN_USING_ENCODER);
+        kickerwheelMotor.setMode(DcMotorEx.RunMode.RUN_USING_ENCODER);
+        shooter1Motor.setZeroPowerBehavior(DcMotorEx.ZeroPowerBehavior.FLOAT);
+        shooter2Motor.setZeroPowerBehavior(DcMotorEx.ZeroPowerBehavior.FLOAT);
+
+        pidControllerShooter = new PIDController5(0.001 , 0.0006, 0);
+        pidControllerKicker = new PIDController5(0.0006, 0.0009, 0);
+
+       // pidController6 = new PIDController6(0.0068 , 0.0006, 0);
+       // pidController5 = new PIDController5(0.006 , 0.0006, 0);
+
+        telemetry.addLine("Ready for start.");
+        telemetry.update();
+
+        waitForStart();
+
+        if (opModeIsActive()) {
+            spinUpShooter(targetVelocity, 2.5);
+            encoderDrive(0.8, -26, -26, -26, -26, 1.0);
+            intakeMotor.setPower(-1);
+            sleep(5000);
+        }
+    }
+    
+    
+    /**
+     * Update voltage compensation factor based on current battery voltage
+     */
+    private void updateVoltageCompensation() {
+        double currentVoltage = myControlHubVoltageSensor.getVoltage();
+        // Compensation factor adjusts power to maintain consistent performance
+        voltageCompensationFactor = NOMINAL_VOLTAGE / currentVoltage;
+    }
+
+
+    /**
+     * Spin up shooter to target velocity using PID control
+     * Continuously updates motor power until velocity is reache
+     * @param target Target velocity in ticks/sec
+     * @param timeout Maximum time to spin up in seconds
+     */
+    private void spinUpShooter(double target, double timeout) {
+        targetVelocity = Math.max(0, target);
+        pidControllerShooter.reset(); // Reset PID state for new target
+        pidControllerKicker.reset(); // Reset PID state for new target
+
+        ElapsedTime spinUpTimer = new ElapsedTime();
+
+        while (opModeIsActive() && spinUpTimer.seconds() < timeout) {
+            // Read current velocity from encoder
+            double currentVelocity = shooter1Motor.getVelocity();
+            double currentVelocityKickerWheel = kickerwheelMotor.getVelocity();
+
+            // Calculate motor power using PID
+            double kickerWheelPower = pidControllerKicker.calculate(currentVelocityKickerWheel, targetVelocityKickerWheel);
+            double shooterPower = pidControllerShooter.calculate(currentVelocity, targetVelocity);
+
+            updateVoltageCompensation();
+
+          // Apply voltage compensation to the power
+            double compensatedPower = shooterPower * voltageCompensationFactor;
+            double kickercompensatedPower = kickerWheelPower * voltageCompensationFactor;
+
+            // Clamp to valid motor power range
+            compensatedPower = Math.max(-1, Math.min(1, compensatedPower));
+            kickercompensatedPower = Math.max(-1, Math.min(1, kickercompensatedPower));
+
+            // Apply power to both shooter motors
+            shooter1Motor.setPower(compensatedPower);
+            shooter2Motor.setPower(compensatedPower);
+            kickerwheelMotor.setPower(kickercompensatedPower);
+
+            // Display telemetry for debugging
+            double currentVoltage = myControlHubVoltageSensor.getVoltage();
+
+            telemetry.addData("Voltage", "%.2fV (Nominal: %.2fV)", currentVoltage, NOMINAL_VOLTAGE);
+            telemetry.addData("Compensation Factor", "%.3f", voltageCompensationFactor);
+            telemetry.addData("Target Velocity", "%.0f ticks/sec", targetVelocity);
+            telemetry.addData("Current Velocity", "%.0f ticks/sec", currentVelocity);
+            telemetry.addData("Kicker Target Velocity", "%.0f ticks/sec", targetVelocityKickerWheel);
+            telemetry.addData("Kicker Current Velocity", "%.0f ticks/sec", currentVelocityKickerWheel);
+            telemetry.addData("Base Power", "%.3f", shooterPower);
+            telemetry.addData("shooter Compensated Power", "%.3f", compensatedPower);
+            telemetry.addData("kicker compensatedPower", "%.3f", kickercompensatedPower);
+            telemetry.addData("Velocity Error", "%.0f ticks/sec", targetVelocity - currentVelocity);
+            telemetry.addData("Ready to Shoot", pidControllerShooter.atTarget(currentVelocity, targetVelocity, 50));
+            telemetry.update();
+            
+            
+        }
+    }
+    
+    
+
+
+    /**
+     * Stop the shooter motors
+     */
+    private void stopShooter() {
+        shooter1Motor.setPower(0);
+        shooter2Motor.setPower(0);
+    }
+
+    /**
+     * Execute shooting sequence - activate intake and kicker
+     */
+
+    /**
+     * 4-MOTOR ENCODER DRIVE FOR MECANUM
+     */
+    public void encoderDrive(double speed,
+                             double flInches, double blInches,
+                             double frInches, double brInches,
+                             double timeoutS) {
+        int flTarget = frontLeftMotor.getCurrentPosition()  + (int) (flInches * COUNTS_PER_INCH);
+        int blTarget = backLeftMotor.getCurrentPosition()   + (int) (blInches * COUNTS_PER_INCH);
+        int frTarget = frontRightMotor.getCurrentPosition() + (int) (frInches * COUNTS_PER_INCH);
+        int brTarget = backRightMotor.getCurrentPosition()  + (int) (brInches * COUNTS_PER_INCH);
+
+        frontLeftMotor.setTargetPosition(flTarget);
+        backLeftMotor.setTargetPosition(blTarget);
+        frontRightMotor.setTargetPosition(frTarget);
+        backRightMotor.setTargetPosition(brTarget);
+
+        frontLeftMotor.setMode(DcMotor.RunMode.RUN_TO_POSITION);
+        backLeftMotor.setMode(DcMotor.RunMode.RUN_TO_POSITION);
+        frontRightMotor.setMode(DcMotor.RunMode.RUN_TO_POSITION);
+        backRightMotor.setMode(DcMotor.RunMode.RUN_TO_POSITION);
+
+        runtime.reset();
+
+        frontLeftMotor.setPower(Math.abs(speed));
+        backLeftMotor.setPower(Math.abs(speed));
+        frontRightMotor.setPower(Math.abs(speed));
+        backRightMotor.setPower(Math.abs(speed));
+
+        while (opModeIsActive() &&
+                runtime.seconds() < timeoutS &&
+                (frontLeftMotor.isBusy() && backLeftMotor.isBusy() &&
+                        frontRightMotor.isBusy() && backRightMotor.isBusy())) {
+            telemetry.addData("Targets", "%d | %d | %d | %d",
+                    flTarget, blTarget, frTarget, brTarget);
+            telemetry.update();
+        }
+
+        frontLeftMotor.setPower(0);
+        backLeftMotor.setPower(0);
+        frontRightMotor.setPower(0);
+        backRightMotor.setPower(0);
+
+        frontLeftMotor.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
+        backLeftMotor.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
+        frontRightMotor.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
+        backRightMotor.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
+
+        frontRightMotor.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.BRAKE);
+        frontLeftMotor.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.BRAKE);
+        backRightMotor.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.BRAKE);
+        backLeftMotor.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.BRAKE);
+
+        sleep(200);
+    }
+}
+
+class PIDController5 {
+    private double kP, kI, kD;
+    private double integral = 0;
+    private double previousError = 0;
+    private ElapsedTime timer = new ElapsedTime();
+
+    public PIDController5(double kP, double kI, double kD) {
+        this.kP = kP;
+        this.kI = kI;
+        this.kD = kD;
+        timer.reset();
+    }
+
+    public double calculate(double current, double target) {
+        double dt = timer.seconds();
+        timer.reset();
+
+        if (dt == 0) dt = 0.001;
+
+        double error = target - current;
+        double p = kP * error;
+
+        integral += error * dt;
+        integral = Math.max(-1000, Math.min(1000, integral));
+        double i = kI * integral;
+
+        double derivative = (error - previousError) / dt;
+        double d = kD * derivative;
+
+        previousError = error;
+
+        double output = p + i + d;
+        return Math.max(-1, Math.min(1, output));
+    }
+    public boolean atTarget(double current, double target, double tolerance) {
+        return Math.abs(target - current) < tolerance;
+    }
+
+    public void reset() {
+        integral = 0;
+        previousError = 0;
+        timer.reset();
+    }
+}
